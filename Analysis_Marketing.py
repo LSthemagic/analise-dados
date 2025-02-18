@@ -3,10 +3,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split
+import statsmodels.api as sm
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-import statsmodels.api as sm
+from scipy.stats import skew, kurtosis, ttest_ind
+from xgboost import XGBRegressor
 
 
 class AnalysisMarketing:
@@ -17,9 +19,18 @@ class AnalysisMarketing:
         self.connection.connect_sqlalchemy()
 
     def _dataframe_from_query(self, query):
-        """Executa uma query e retorna um DataFrame"""
+        """Executa uma query e retorna um DataFrame sem valores nulos"""
         df = pd.read_sql_query(query, self.connection.engine)
         return df.dropna()
+
+    def _describe_statistics(self, df):
+        """Exibe estatísticas descritivas dos dados"""
+        print(df.describe())
+
+        for column in df.select_dtypes(include=['number']).columns:
+            print(f"{column}:")
+            print(f"   Assimetria: {skew(df[column]):.2f}")
+            print(f"   Curtose: {kurtosis(df[column]):.2f}\n")
 
     def _heatmap(self, df):
         """Cria um heatmap de correlação entre as variáveis"""
@@ -52,12 +63,23 @@ class AnalysisMarketing:
         rmse = np.sqrt(mse)
         r2 = r2_score(y_test, y_pred)
 
-        print(f"MAE: {mae:.2f}")  
-        print(f"MSE: {mse:.2f}")  
-        print(f"RMSE: {rmse:.2f}")  
-        print(f"R²: {r2:.2f}")  
+        print(f"MAE: {mae:.2f}")
+        print(f"MSE: {mse:.2f}")
+        print(f"RMSE: {rmse:.2f}")
+        print(f"R²: {r2:.2f}")
 
         return model, y_pred
+
+    def _train_xgboost(self, X_train, X_test, y_train, y_test):
+        """Treina um modelo XGBoost e retorna os resultados"""
+        xgb_model = XGBRegressor()
+        xgb_model.fit(X_train, y_train)
+        y_pred = xgb_model.predict(X_test)
+
+        scores = cross_val_score(xgb_model, X_train, y_train, cv=5, scoring="r2")
+        print(f"R² médio (XGBoost): {scores.mean():.2f}")
+
+        return xgb_model, y_pred
 
     def _plot_predictions(self, y_test, y_pred):
         """Gera um gráfico comparando valores reais e previstos"""
@@ -119,7 +141,7 @@ query = "SELECT advertisement_spend, promotion_spend, administration_spend, prof
 df = analyse._dataframe_from_query(query)
 
 # Exibir estatísticas descritivas dos dados
-print(df.describe())
+analyse._describe_statistics(df)
 
 # Exibir o heatmap
 analyse._heatmap(df)
@@ -128,15 +150,17 @@ analyse._heatmap(df)
 X = df[['advertisement_spend', 'promotion_spend', 'administration_spend']]
 y = df['profit']
 
+# Criar nova variável ROI (Retorno sobre Investimento)
+df['ROI'] = (df['profit'] - (df['advertisement_spend'] + df['promotion_spend'])) / (df['advertisement_spend'] + df['promotion_spend'])
+
 # Dividir os dados em treino (80%) e teste (20%)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Exibir tamanhos dos conjuntos
-print(f"Tamanho do conjunto de treino: {X_train.shape}")
-print(f"Tamanho do conjunto de teste: {X_test.shape}")
-
-# Criar e treinar o modelo
+# Criar e treinar o modelo de regressão linear
 model, y_pred = analyse._train_model(X_train, X_test, y_train, y_test)
+
+# Criar e treinar o modelo XGBoost
+xgb_model, xgb_pred = analyse._train_xgboost(X_train, X_test, y_train, y_test)
 
 # Analisar previsões
 analyse._plot_predictions(y_test, y_pred)
